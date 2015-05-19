@@ -1,73 +1,73 @@
-var mysql = require('mysql');
-var akismet = require('akismet-api');
-
-var db_config = {
+var connection = require('mysql').createConnection({
     host: 'localhost',
     user: 'root',
     database: 'developer_mozilla_org'
-};
-var con = mysql.createConnection(db_config);
+});
 
-var client = akismet.client({
-    key: 'get_yer_own',
+var akismet_client = require('akismet-api').client({
+    /* set this environment variable or it won't work */
+    key: process.env.AKISMET_KEY,
     blog: 'https://developer.allizom.org'
 });
 
-var params = {
+/* normally these params would be determined at publication time */
+var akismet_params = {
     useragent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.90 Safari/537.36 FirePHP/4Chrome',
     referrer: 'http://google.com',
     comment_type: 'article_revision',
     is_test: 'true'
 }
 
-con.connect();
-con.query('SELECT wr.id, wr.content, rip.ip FROM wiki_revision wr, wiki_revisionip rip WHERE wr.creator_id NOT IN (SELECT user_id from users_userban) AND rip.revision_id = wr.id ORDER BY RAND() LIMIT 100', function(err, rows) {
+connection.connect();
+/* get some random ham */
+connection.query('SELECT wr.id, wr.content, rip.ip '
+        + 'FROM wiki_revision wr, wiki_revisionip rip '
+        + 'WHERE wr.creator_id NOT IN (SELECT user_id from users_userban) ' 
+        + 'AND rip.revision_id = wr.id '
+        + 'ORDER BY RAND() LIMIT 100', function(err, rows) {
     if (err) throw err;
-    ham = rows;
+    var ham = rows;
 
-    con.query('SELECT wr.id, wr.content, rip.ip FROM wiki_revision wr, wiki_revisionip rip WHERE wr.creator_id IN (SELECT user_id from users_userban) AND rip.revision_id = wr.id ORDER BY RAND() LIMIT 100', function(err, rows) {
+    /* get some random spam */
+    connection.query('SELECT wr.id, wr.content, rip.ip '
+            + 'FROM wiki_revision wr, wiki_revisionip rip '
+            + 'WHERE wr.creator_id IN (SELECT user_id from users_userban) ' 
+            + 'AND rip.revision_id = wr.id '
+            + 'ORDER BY RAND() LIMIT 100', function(err, rows) {
         if (err) throw err;
-        spam = rows;
+        var spam = rows;
 
-        con.end(function(err) {
-        }); 
+        connection.end(function(err) {
+            /* kthxbye */
+        });
 
+        /* just send all those rows over to this function it's great */
         try_akismet({'spam': spam, 'ham': ham})
     });
 });
 
-
 function try_akismet(spamham) {
-    client.verifyKey(function(err, valid) {
-        if (valid) {
-            //console.log('valid key!');
-        }
-        else {
-            //console.log('invalid key' + err.message);
-        }
-    });
-
+    /* genius idea: output csv using console.log, explore data in spreadsheet */
     console.log('revision id, type, akismet identification, good?');
+
     ['spam', 'ham'].forEach(function(type, i) {
         spamham[type].forEach(function(row, index) {
-            params['comment_content'] = row['content'];
-            params['user_ip'] = row['ip'];
 
-            client.checkSpam(params, function(err, spam) {
+            /* here is what we actually know about this article & author */
+            akismet_params['comment_content'] = row['content'];
+            akismet_params['user_ip'] = row['ip'];
+
+            akismet_client.checkSpam(akismet_params, function(err, spam) {
                 if (err) console.log ('Error!' + err);
+                var akismet_id = (spam ? 'spam' : 'ham');
 
-                if (spam && type == 'spam') {
-                    console.log(row['id'] + ', spam, spam, YES');
-                }
-                if (!spam && type == 'ham') {
-                    console.log(row['id'] + ', ham, ham, YES');
-                } 
-                if (spam && type == 'ham') {
-                    console.log(row['id'] + ', ham, spam, NO');
-                } 
-                if (!spam && type == 'spam') {
-                    console.log(row['id'] + ', spam, ham, NO');
-                } 
+                /* we want to know how each case performed 
+                format: revision id, type, akismet identification, good? */
+                console.log(row['id'] 
+                           + ',' + type 
+                           + ',' + akismet_id 
+                           + ',' + (type == akismet_id ? 'YES' : 'NO')
+                           );
             });
         });
     });
